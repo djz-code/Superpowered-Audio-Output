@@ -1,4 +1,4 @@
-#import "SuperpoweredIOSAudioOutput.h"
+#import "SuperpoweredAudioOutput.h"
 #import <AudioToolbox/AudioToolbox.h>
 #import <AudioUnit/AudioUnit.h>
 #import <MediaPlayer/MediaPlayer.h>
@@ -15,9 +15,12 @@ static audioDeviceType NSStringToAudioDeviceType(NSString *str) {
 }
 
 
-@implementation SuperpoweredIOSAudioOutput {
-    id<SuperpoweredIOSAudioIODelegate>delegate;
-    NSString *audioSessionCategory, *multiDeviceName;
+@implementation SuperpoweredAudioOutput {
+    id<SuperpoweredAudioIODelegate>delegate;
+#if TARGET_OS_IPHONE || TARGET_IPHONE_SIMULATOR
+    NSString *audioSessionCategory;
+#endif
+    NSString *multiDeviceName;
     NSMutableString *outputsAndInputs;
     audioProcessingCallback_C processingCallback;
     void *processingClientdata;
@@ -31,13 +34,16 @@ static audioDeviceType NSStringToAudioDeviceType(NSString *str) {
     SInt32 AUOutputChannelMap[32], AUInputChannelMap[32];
 
     int remoteIOChannels, multiDeviceChannels, silenceFrames, samplerate, multiChannels, preferredMinimumSamplerate;
-    bool audioUnitRunning, iOS6, background, fixReceiver, waitingForReset;
+    bool audioUnitRunning, waitingForReset;
+#if TARGET_OS_IPHONE || TARGET_IPHONE_SIMULATOR
+    bool iOS6, background, fixReceiver;
+#endif
 }
 
 @synthesize preferredBufferSizeMs, inputEnabled, saveBatteryInBackground;
 
 static OSStatus audioProcessingCallback(void *inRefCon, AudioUnitRenderActionFlags *ioActionFlags, const AudioTimeStamp *inTimeStamp, UInt32 inBusNumber, UInt32 inNumberFrames, AudioBufferList *ioData) {
-    SuperpoweredIOSAudioOutput *self = (__bridge SuperpoweredIOSAudioOutput *)inRefCon;
+    SuperpoweredAudioOutput *self = (__bridge SuperpoweredAudioOutput *)inRefCon;
 
     div_t d = div(inNumberFrames, 8);
     if ((d.rem != 0) || (inNumberFrames < 32) || (inNumberFrames > 512) || (ioData->mNumberBuffers != self->remoteIOChannels)) {
@@ -74,16 +80,22 @@ static OSStatus audioProcessingCallback(void *inRefCon, AudioUnitRenderActionFla
 	return noErr;
 }
 
-- (id)initWithDelegate:(NSObject<SuperpoweredIOSAudioIODelegate> *)d preferredBufferSize:(unsigned int)preferredBufferSize preferredMinimumSamplerate:(unsigned int)prefsamplerate audioSessionCategory:(NSString *)category multiChannels:(int)channels fixReceiver:(bool)fr {
+#if TARGET_OS_IPHONE || TARGET_IPHONE_SIMULATOR
+- (id)initWithDelegate:(NSObject<SuperpoweredAudioIODelegate> *)d preferredBufferSize:(unsigned int)preferredBufferSize preferredMinimumSamplerate:(unsigned int)prefsamplerate audioSessionCategory:(NSString *)category multiChannels:(int)channels fixReceiver:(bool)fr {
+#else
+- (id)initWithDelegate:(id<SuperpoweredAudioIODelegate>)delegate preferredBufferSize:(unsigned int)preferredBufferSize preferredMinimumSamplerate:(unsigned int)preferredMinimumSamplerate multiChannels:(int)multiChannels;
+#endif
     self = [super init];
     if (self) {
         iOS6 = ([[[UIDevice currentDevice] systemVersion] compare:@"6.0" options:NSNumericSearch] != NSOrderedAscending);
         multiDeviceChannels = 0;
         multiChannels = !iOS6 ? 2 : channels;
+#if TARGET_OS_IPHONE || TARGET_IPHONE_SIMULATOR
 #if !__has_feature(objc_arc)
         audioSessionCategory = [category retain];
 #else
         audioSessionCategory = category;
+#endif
 #endif
         saveBatteryInBackground = true;
         remoteIOChannels = 2;
@@ -93,7 +105,9 @@ static OSStatus audioProcessingCallback(void *inRefCon, AudioUnitRenderActionFla
         processingCallback = NULL;
         processingClientdata = NULL;
         delegate = d;
+#if TARGET_OS_IPHONE || TARGET_IPHONE_SIMULATOR
         fixReceiver = fr;
+#endif
 
         outputsAndInputs = [[NSMutableString alloc] initWithCapacity:256];
         silenceFrames = 0;
@@ -355,7 +369,7 @@ static void streamFormatChangedCallback(void *inRefCon, AudioUnit inUnit, AudioU
         AudioStreamBasicDescription format;
         AudioUnitGetProperty(inUnit, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Output, 0, &format, &size);
 
-        SuperpoweredIOSAudioOutput *self = (__bridge SuperpoweredIOSAudioOutput *)inRefCon;
+        SuperpoweredAudioOutput *self = (__bridge SuperpoweredAudioOutput *)inRefCon;
         self->samplerate = (int)format.mSampleRate;
         [self performSelectorOnMainThread:@selector(setSamplerateAndBuffersize) withObject:nil waitUntilDone:NO];
     };

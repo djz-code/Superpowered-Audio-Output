@@ -1,8 +1,11 @@
+#import <Foundation/Foundation.h>
+#if TARGET_OS_IPHONE || TARGET_IPHONE_SIMULATOR
 #import <AVFoundation/AVAudioSession.h>
+#endif
 
 struct multiOutputChannelMap;
 struct multiInputChannelMap;
-@protocol SuperpoweredIOSAudioIODelegate;
+@protocol SuperpoweredAudioIODelegate;
 
 /**
  @brief You can have an audio processing callback in the delegate (Objective-C) or pure C. This is the pure C prototype.
@@ -24,7 +27,7 @@ typedef bool (*audioProcessingCallback_C) (void *clientdata, float **buffers, un
  
  @warning All methods and setters should be called on the main thread only!
  */
-@interface SuperpoweredIOSAudioOutput: NSObject {
+@interface SuperpoweredAudioOutput: NSObject {
     int preferredBufferSizeMs;
     bool inputEnabled;
     bool saveBatteryInBackground;
@@ -40,14 +43,18 @@ typedef bool (*audioProcessingCallback_C) (void *clientdata, float **buffers, un
 /**
  @brief Creates the audio output instance.
   
- @param delegate The object fully implementing the SuperpoweredIOSAudioIODelegate protocol. Not retained.
+ @param delegate The object fully implementing the SuperpoweredAudioIODelegate protocol. Not retained.
  @param preferredBufferSize The initial value for preferredBufferSizeMs. 12 is good for every iOS device (512 samples).
  @param preferredMinimumSamplerate The preferred minimum sample rate. 44100 is recommended for good sound quality.
  @param audioSessionCategory The audio session category.
  @param multiChannels The number of channels you provide in the audio processing callback, if there is a multi-channel audio device is available (has more than two channels).
  @param fixReceiver Sometimes the audio goes to the phone's receiver ("ear speaker"). Set this to true if you want the real speaker instead.
  */
-- (id)initWithDelegate:(id<SuperpoweredIOSAudioIODelegate>)delegate preferredBufferSize:(unsigned int)preferredBufferSize preferredMinimumSamplerate:(unsigned int)preferredMinimumSamplerate audioSessionCategory:(NSString *)audioSessionCategory multiChannels:(int)multiChannels fixReceiver:(bool)fixReceiver;
+#if TARGET_OS_IPHONE || TARGET_IPHONE_SIMULATOR
+- (id)initWithDelegate:(id<SuperpoweredAudioIODelegate>)delegate preferredBufferSize:(unsigned int)preferredBufferSize preferredMinimumSamplerate:(unsigned int)preferredMinimumSamplerate audioSessionCategory:(NSString *)audioSessionCategory multiChannels:(int)multiChannels fixReceiver:(bool)fixReceiver;
+#else 
+- (id)initWithDelegate:(id<SuperpoweredAudioIODelegate>)delegate preferredBufferSize:(unsigned int)preferredBufferSize preferredMinimumSamplerate:(unsigned int)preferredMinimumSamplerate multiChannels:(int)multiChannels;
+#endif
 
 /**
  @brief Starts audio processing.
@@ -80,9 +87,9 @@ typedef bool (*audioProcessingCallback_C) (void *clientdata, float **buffers, un
 
 
 /**
- @brief You must implement this protocol to make SuperpoweredIOSAudioOutput work.
+ @brief You must implement this protocol to make SuperpoweredAudioOutput work.
  */
-@protocol SuperpoweredIOSAudioIODelegate
+@protocol SuperpoweredAudioIODelegate
 
 /**
  @brief The audio session may be interrupted by a phone call, etc. This method is called on the main thread when this happens.
