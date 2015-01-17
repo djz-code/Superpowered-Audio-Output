@@ -1,18 +1,22 @@
 #import "SuperpoweredAudioOutput.h"
 #import <AudioToolbox/AudioToolbox.h>
 #import <AudioUnit/AudioUnit.h>
+#if TARGET_OS_IPHONE || TARGET_IPHONE_SIMULATOR
 #import <MediaPlayer/MediaPlayer.h>
+#endif
 
 typedef enum audioDeviceType {
     audioDeviceType_USB = 1, audioDeviceType_headphone = 2, audioDeviceType_HDMI = 3, audioDeviceType_other = 4
 } audioDeviceType;
 
+#if TARGET_OS_IPHONE || TARGET_IPHONE_SIMULATOR
 static audioDeviceType NSStringToAudioDeviceType(NSString *str) {
     if ([str isEqualToString:AVAudioSessionPortHeadphones]) return audioDeviceType_headphone;
     else if ([str isEqualToString:AVAudioSessionPortUSBAudio]) return audioDeviceType_USB;
     else if ([str isEqualToString:AVAudioSessionPortHDMI]) return audioDeviceType_HDMI;
     else return audioDeviceType_other;
 }
+#endif
 
 
 @implementation SuperpoweredAudioOutput {
@@ -68,13 +72,16 @@ static OSStatus audioProcessingCallback(void *inRefCon, AudioUnitRenderActionFla
         // Despite of ioActionFlags, it outputs garbage sometimes, so must zero the buffers:
         for (unsigned char n = 0; n < ioData->mNumberBuffers; n++) memset(ioData->mBuffers[n].mData, 0, ioData->mBuffers[n].mDataByteSize);
         
+#if TARGET_OS_IPHONE || TARGET_IPHONE_SIMULATOR
         if (self->background && self->saveBatteryInBackground) { // If the app is in the background, check if we don't output anything.
             self->silenceFrames += inNumberFrames;
             if (self->silenceFrames > self->samplerate) { // If we waited for more than 1 second with silence, stop RemoteIO to save battery.
                 self->silenceFrames = 0;
                 [self beginInterruption];
             };
-        } else self->silenceFrames = 0;
+        } else
+#endif
+            self->silenceFrames = 0;
     } else self->silenceFrames = 0;
 
 	return noErr;
@@ -83,19 +90,23 @@ static OSStatus audioProcessingCallback(void *inRefCon, AudioUnitRenderActionFla
 #if TARGET_OS_IPHONE || TARGET_IPHONE_SIMULATOR
 - (id)initWithDelegate:(NSObject<SuperpoweredAudioIODelegate> *)d preferredBufferSize:(unsigned int)preferredBufferSize preferredMinimumSamplerate:(unsigned int)prefsamplerate audioSessionCategory:(NSString *)category multiChannels:(int)channels fixReceiver:(bool)fr {
 #else
-- (id)initWithDelegate:(id<SuperpoweredAudioIODelegate>)delegate preferredBufferSize:(unsigned int)preferredBufferSize preferredMinimumSamplerate:(unsigned int)preferredMinimumSamplerate multiChannels:(int)multiChannels;
+- (id)initWithDelegate:(id<SuperpoweredAudioIODelegate>)d preferredBufferSize:(unsigned int)preferredBufferSize preferredMinimumSamplerate:(unsigned int)prefsamplerate multiChannels:(int)channels {
 #endif
     self = [super init];
     if (self) {
+#if TARGET_OS_IPHONE || TARGET_IPHONE_SIMULATOR
         iOS6 = ([[[UIDevice currentDevice] systemVersion] compare:@"6.0" options:NSNumericSearch] != NSOrderedAscending);
         multiDeviceChannels = 0;
         multiChannels = !iOS6 ? 2 : channels;
-#if TARGET_OS_IPHONE || TARGET_IPHONE_SIMULATOR
 #if !__has_feature(objc_arc)
         audioSessionCategory = [category retain];
 #else
         audioSessionCategory = category;
 #endif
+#else
+//        iOS6 = ([[[UIDevice currentDevice] systemVersion] compare:@"6.0" options:NSNumericSearch] != NSOrderedAscending);
+        multiDeviceChannels = 0;
+        multiChannels = channels;
 #endif
         saveBatteryInBackground = true;
         remoteIOChannels = 2;
@@ -111,13 +122,17 @@ static OSStatus audioProcessingCallback(void *inRefCon, AudioUnitRenderActionFla
 
         outputsAndInputs = [[NSMutableString alloc] initWithCapacity:256];
         silenceFrames = 0;
-        background = audioUnitRunning = false;
+#if TARGET_OS_IPHONE || TARGET_IPHONE_SIMULATOR
+        background = false;
+#endif
+        audioUnitRunning = false;
         samplerate = 0;
         multiDeviceName = nil;
         audioUnit = NULL;
 
         [self resetAudioSession];
         
+#if TARGET_OS_IPHONE || TARGET_IPHONE_SIMULATOR
         // Need to listen for a few app and audio session related events.
         [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(onForeground) name:UIApplicationWillEnterForegroundNotification object:nil];
         [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(onBackground) name:UIApplicationDidEnterBackgroundNotification object:nil];
@@ -129,6 +144,7 @@ static OSStatus audioProcessingCallback(void *inRefCon, AudioUnitRenderActionFla
             AVAudioSession *s = [AVAudioSession sharedInstance];
             s.delegate = (id<AVAudioSessionDelegate>)self;
         };
+#endif
     };
     return self;
 }
@@ -144,8 +160,11 @@ static OSStatus audioProcessingCallback(void *inRefCon, AudioUnitRenderActionFla
         AudioComponentInstanceDispose(audioUnit);
     };
     
+#if TARGET_OS_IPHONE || TARGET_IPHONE_SIMULATOR
     [[AVAudioSession sharedInstance] setActive:NO error:nil];
     [[NSNotificationCenter defaultCenter] removeObserver:self];
+#endif
+    
 #if !__has_feature(objc_arc)
     [audioSessionCategory release];
     [outputsAndInputs release];
@@ -165,7 +184,9 @@ static OSStatus audioProcessingCallback(void *inRefCon, AudioUnitRenderActionFla
     else {
         if (audioUnit) AudioOutputUnitStop(audioUnit);
         audioUnitRunning = false;
+#if TARGET_OS_IPHONE || TARGET_IPHONE_SIMULATOR
         [[AVAudioSession sharedInstance] setActive:NO error:nil];
+#endif
         waitingForReset = true;
 
         [self performSelector:@selector(resetStart) withObject:nil afterDelay:2.0]; // Let's wait 2 seconds before we resume.
@@ -184,17 +205,18 @@ static OSStatus audioProcessingCallback(void *inRefCon, AudioUnitRenderActionFla
     if (audioUnitRunning) return;
     if (![NSThread isMainThread]) [self performSelectorOnMainThread:@selector(endInterruption) withObject:nil waitUntilDone:NO];
     else {
+#if TARGET_OS_IPHONE || TARGET_IPHONE_SIMULATOR
         if ([[AVAudioSession sharedInstance] setActive:YES error:nil] && [self start]) {
             [delegate interruptionEnded];
             audioUnitRunning = true;
         };
-        
         if (!audioUnitRunning) { // Need to try twice sometimes. Don't know why.
             if ([[AVAudioSession sharedInstance] setActive:YES error:nil] && [self start]) {
                 [delegate interruptionEnded];
                 audioUnitRunning = true;
             };
         };
+#endif
     };
 }
 
@@ -206,6 +228,7 @@ static OSStatus audioProcessingCallback(void *inRefCon, AudioUnitRenderActionFla
     [delegate interruptionStarted];
 }
 
+#if TARGET_OS_IPHONE || TARGET_IPHONE_SIMULATOR
 - (void)onAudioSessionInterrupted:(NSNotification *)notification {
     NSNumber *interruption = [notification.userInfo objectForKey:AVAudioSessionInterruptionTypeKey];
     if (interruption) switch ([interruption intValue]) {
@@ -217,13 +240,14 @@ static OSStatus audioProcessingCallback(void *inRefCon, AudioUnitRenderActionFla
     };
 }
 
+    
 - (void)onForeground { // App comes foreground.
     if (background) {
         background = false;
         [self endInterruption];
     };
 }
-
+    
 - (void)onBackground { // App went to background.
     background = true;
 }
@@ -347,20 +371,26 @@ static OSStatus audioProcessingCallback(void *inRefCon, AudioUnitRenderActionFla
     };
     [[AVAudioSession sharedInstance] setPreferredIOBufferDuration:double(preferredBufferSizeMs) * 0.001 error:NULL];
 }
+#endif
 
 - (void)resetAudioSession {
     remoteIOChannels = multiDeviceChannels ? multiChannels : 2;
 
+#if TARGET_OS_IPHONE || TARGET_IPHONE_SIMULATOR
     // If an audio device is connected with only 2 channels and we provide more, force multi-route category to combine the iOS device's output with the audio device.
     [[AVAudioSession sharedInstance] setCategory:(multiDeviceChannels == 2) && (multiChannels > 2) ? AVAudioSessionCategoryMultiRoute : audioSessionCategory error:NULL];
     [[AVAudioSession sharedInstance] setMode:AVAudioSessionModeDefault error:NULL];
     [self setSamplerateAndBuffersize];
     [[AVAudioSession sharedInstance] setActive:YES error:NULL];
-
+#endif
+    
     [self recreateRemoteIO];
     waitingForReset = false;
+#if TARGET_OS_IPHONE || TARGET_IPHONE_SIMULATOR
     if (iOS6) [self onRouteChange:nil]; else [self multiRemapChannels];
+#endif
 }
+
 
 static void streamFormatChangedCallback(void *inRefCon, AudioUnit inUnit, AudioUnitPropertyID inID, AudioUnitScope inScope, AudioUnitElement inElement) {
     if ((inScope == kAudioUnitScope_Output) && (inElement == 0)) {
@@ -380,7 +410,13 @@ static void streamFormatChangedCallback(void *inRefCon, AudioUnit inUnit, AudioU
 
     AudioComponentDescription desc;
 	desc.componentType = kAudioUnitType_Output;
+
+#if TARGET_OS_IPHONE || TARGET_IPHONE_SIMULATOR
 	desc.componentSubType = kAudioUnitSubType_RemoteIO;
+#else
+    desc.componentSubType = kAudioUnitSubType_HALOutput;
+#endif
+    
 	desc.componentFlags = 0;
 	desc.componentFlagsMask = 0;
 	desc.componentManufacturer = kAudioUnitManufacturer_Apple;
@@ -400,7 +436,9 @@ static void streamFormatChangedCallback(void *inRefCon, AudioUnit inUnit, AudioU
     AudioUnitGetProperty(au, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Output, 0, &format, &size);
 
     samplerate = (int)format.mSampleRate;
+#if TARGET_OS_IPHONE || TARGET_IPHONE_SIMULATOR
     [self setSamplerateAndBuffersize];
+#endif
 
 	format.mFormatID = kAudioFormatLinearPCM;
 	format.mFormatFlags = (kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked | kAudioFormatFlagIsNonInterleaved | kAudioFormatFlagsNativeEndian);
@@ -445,10 +483,12 @@ static void streamFormatChangedCallback(void *inRefCon, AudioUnit inUnit, AudioU
 }
 
 - (void)multiRemapChannels {
+#if TARGET_OS_IPHONE || TARGET_IPHONE_SIMULATOR
     if (multiChannels < 3) {
         if (!iOS6) [delegate multiMapChannels:&outputChannelMap inputMap:&inputChannelMap multiDeviceName:multiDeviceName outputsAndInputs:outputsAndInputs];
         return;
     };
+#endif
     for (int n = 0; n < 32; n++) AUOutputChannelMap[n] = -1;
     
     if (multiChannels > 2) [delegate multiMapChannels:&outputChannelMap inputMap:&inputChannelMap multiDeviceName:multiDeviceName outputsAndInputs:outputsAndInputs];
@@ -475,10 +515,12 @@ static void streamFormatChangedCallback(void *inRefCon, AudioUnit inUnit, AudioU
                 };
         } else break;
     };
-
+    
+#if TARGET_OS_IPHONE || TARGET_IPHONE_SIMULATOR
     if (audioUnit && iOS6) [self setChannelMap:false map:AUOutputChannelMap];
     for (int n = 0; n < 32; n++) AUInputChannelMap[n] = inputChannelMap.USBChannels[n];
     if (audioUnit && iOS6 && inputEnabled) [self setChannelMap:true map:AUInputChannelMap];
+#endif
 }
 
 - (void)setChannelMap:(bool)input map:(SInt32 *)map {
@@ -497,10 +539,12 @@ static void streamFormatChangedCallback(void *inRefCon, AudioUnit inUnit, AudioU
             AudioUnit oldUnit = audioUnit;
             
             audioUnit = [self createRemoteIO];
+#if TARGET_OS_IPHONE || TARGET_IPHONE_SIMULATOR
             if (multiDeviceChannels && iOS6) {
                 [self setChannelMap:false map:AUOutputChannelMap];
                 if (inputEnabled) [self setChannelMap:true map:AUInputChannelMap];
             };
+#endif
             
             if (audioUnitRunning) [self start];
             
@@ -515,7 +559,9 @@ static void streamFormatChangedCallback(void *inRefCon, AudioUnit inUnit, AudioU
 
 - (void)setPreferredBufferSizeMs:(int)ms {
     preferredBufferSizeMs = ms;
+#if TARGET_OS_IPHONE || TARGET_IPHONE_SIMULATOR
     [self setSamplerateAndBuffersize];
+#endif
 }
 
 @end
