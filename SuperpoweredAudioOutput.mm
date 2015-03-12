@@ -40,7 +40,7 @@ static audioDeviceType NSStringToAudioDeviceType(NSString *str) {
     int remoteIOChannels, multiDeviceChannels, silenceFrames, samplerate, multiChannels, preferredMinimumSamplerate;
     bool audioUnitRunning, waitingForReset;
 #if TARGET_OS_IPHONE || TARGET_IPHONE_SIMULATOR
-    bool iOS6, background, fixReceiver;
+    bool background, fixReceiver;
 #endif
 }
 
@@ -95,16 +95,14 @@ static OSStatus audioProcessingCallback(void *inRefCon, AudioUnitRenderActionFla
     self = [super init];
     if (self) {
 #if TARGET_OS_IPHONE || TARGET_IPHONE_SIMULATOR
-        iOS6 = ([[[UIDevice currentDevice] systemVersion] compare:@"6.0" options:NSNumericSearch] != NSOrderedAscending);
         multiDeviceChannels = 0;
-        multiChannels = !iOS6 ? 2 : channels;
+        multiChannels = channels;
 #if !__has_feature(objc_arc)
         audioSessionCategory = [category retain];
 #else
         audioSessionCategory = category;
 #endif
 #else
-//        iOS6 = ([[[UIDevice currentDevice] systemVersion] compare:@"6.0" options:NSNumericSearch] != NSOrderedAscending);
         multiDeviceChannels = 0;
         multiChannels = channels;
 #endif
@@ -136,14 +134,9 @@ static OSStatus audioProcessingCallback(void *inRefCon, AudioUnitRenderActionFla
         // Need to listen for a few app and audio session related events.
         [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(onForeground) name:UIApplicationWillEnterForegroundNotification object:nil];
         [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(onBackground) name:UIApplicationDidEnterBackgroundNotification object:nil];
-        if (iOS6) {
-            [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(onMediaServerReset:) name:AVAudioSessionMediaServicesWereResetNotification object:[AVAudioSession sharedInstance]];
-            [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(onAudioSessionInterrupted:) name:AVAudioSessionInterruptionNotification object:[AVAudioSession sharedInstance]];
-            [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(onRouteChange:) name:AVAudioSessionRouteChangeNotification object:[AVAudioSession sharedInstance]];
-        } else {
-            AVAudioSession *s = [AVAudioSession sharedInstance];
-            s.delegate = (id<AVAudioSessionDelegate>)self;
-        };
+        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(onMediaServerReset:) name:AVAudioSessionMediaServicesWereResetNotification object:[AVAudioSession sharedInstance]];
+        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(onAudioSessionInterrupted:) name:AVAudioSessionInterruptionNotification object:[AVAudioSession sharedInstance]];
+        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(onRouteChange:) name:AVAudioSessionRouteChangeNotification object:[AVAudioSession sharedInstance]];
 #endif
     };
     return self;
@@ -356,17 +349,16 @@ static OSStatus audioProcessingCallback(void *inRefCon, AudioUnitRenderActionFla
     
     [self multiRemapChannels];
     // Maximize system volume for connected audio devices.
-    if (_multiDeviceChannels) [[MPMusicPlayerController applicationMusicPlayer] setVolume:1.0f];
+//    if (_multiDeviceChannels) [[MPMusicPlayerController applicationMusicPlayer] setVolume:1.0f];
 }
 
 - (void)setSamplerateAndBuffersize {
     if (samplerate > 0) {
         double sr = samplerate < preferredMinimumSamplerate ? preferredMinimumSamplerate : 0;
-        double current = !iOS6 ? [[AVAudioSession sharedInstance] preferredHardwareSampleRate] : [[AVAudioSession sharedInstance] preferredSampleRate];
+        double current = [[AVAudioSession sharedInstance] preferredSampleRate];
 
         if (current != sr) {
-            if (!iOS6) [[AVAudioSession sharedInstance] setPreferredHardwareSampleRate:sr error:NULL];
-            else [[AVAudioSession sharedInstance] setPreferredSampleRate:sr error:NULL];
+            [[AVAudioSession sharedInstance] setPreferredSampleRate:sr error:NULL];
         };
     };
     [[AVAudioSession sharedInstance] setPreferredIOBufferDuration:double(preferredBufferSizeMs) * 0.001 error:NULL];
@@ -387,7 +379,7 @@ static OSStatus audioProcessingCallback(void *inRefCon, AudioUnitRenderActionFla
     [self recreateRemoteIO];
     waitingForReset = false;
 #if TARGET_OS_IPHONE || TARGET_IPHONE_SIMULATOR
-    if (iOS6) [self onRouteChange:nil]; else [self multiRemapChannels];
+    [self onRouteChange:nil];
 #endif
 }
 
@@ -485,7 +477,7 @@ static void streamFormatChangedCallback(void *inRefCon, AudioUnit inUnit, AudioU
 - (void)multiRemapChannels {
 #if TARGET_OS_IPHONE || TARGET_IPHONE_SIMULATOR
     if (multiChannels < 3) {
-        if (!iOS6) [delegate multiMapChannels:&outputChannelMap inputMap:&inputChannelMap multiDeviceName:multiDeviceName outputsAndInputs:outputsAndInputs];
+        [delegate multiMapChannels:&outputChannelMap inputMap:&inputChannelMap multiDeviceName:multiDeviceName outputsAndInputs:outputsAndInputs];
         return;
     };
 #endif
@@ -517,9 +509,9 @@ static void streamFormatChangedCallback(void *inRefCon, AudioUnit inUnit, AudioU
     };
     
 #if TARGET_OS_IPHONE || TARGET_IPHONE_SIMULATOR
-    if (audioUnit && iOS6) [self setChannelMap:false map:AUOutputChannelMap];
+    if (audioUnit) [self setChannelMap:false map:AUOutputChannelMap];
     for (int n = 0; n < 32; n++) AUInputChannelMap[n] = inputChannelMap.USBChannels[n];
-    if (audioUnit && iOS6 && inputEnabled) [self setChannelMap:true map:AUInputChannelMap];
+    if (audioUnit && inputEnabled) [self setChannelMap:true map:AUInputChannelMap];
 #endif
 }
 
@@ -540,7 +532,7 @@ static void streamFormatChangedCallback(void *inRefCon, AudioUnit inUnit, AudioU
             
             audioUnit = [self createRemoteIO];
 #if TARGET_OS_IPHONE || TARGET_IPHONE_SIMULATOR
-            if (multiDeviceChannels && iOS6) {
+            if (multiDeviceChannels) {
                 [self setChannelMap:false map:AUOutputChannelMap];
                 if (inputEnabled) [self setChannelMap:true map:AUInputChannelMap];
             };
