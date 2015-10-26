@@ -199,12 +199,12 @@ static OSStatus audioProcessingCallback(void *inRefCon, AudioUnitRenderActionFla
     if (![NSThread isMainThread]) [self performSelectorOnMainThread:@selector(endInterruption) withObject:nil waitUntilDone:NO];
     else {
 #if TARGET_OS_IPHONE || TARGET_IPHONE_SIMULATOR
-        if ([[AVAudioSession sharedInstance] setActive:YES error:nil] && [self start]) {
+        if ([[AVAudioSession sharedInstance] setActive:YES error:nil]) {
             [delegate interruptionEnded];
             audioUnitRunning = true;
         };
         if (!audioUnitRunning) { // Need to try twice sometimes. Don't know why.
-            if ([[AVAudioSession sharedInstance] setActive:YES error:nil] && [self start]) {
+            if ([[AVAudioSession sharedInstance] setActive:YES error:nil]) {
                 [delegate interruptionEnded];
                 audioUnitRunning = true;
             };
