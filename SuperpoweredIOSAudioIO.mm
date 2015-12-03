@@ -65,7 +65,7 @@ static audioDeviceType NSStringToAudioDeviceType(NSString *str) {
         audioUnit = NULL;
 
         [self resetAudio];
-        
+
         // Need to listen for a few app and audio session related events.
         [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(onForeground) name:UIApplicationWillEnterForegroundNotification object:nil];
         [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(onBackground) name:UIApplicationDidEnterBackgroundNotification object:nil];
@@ -128,7 +128,7 @@ static audioDeviceType NSStringToAudioDeviceType(NSString *str) {
         audioUnitRunning = true;
         break;
     };
- }
+}
 
 - (void)endInterruptionWithFlags:(NSUInteger)flags {
     [self endInterruption];
@@ -166,7 +166,7 @@ static audioDeviceType NSStringToAudioDeviceType(NSString *str) {
         [self performSelectorOnMainThread:@selector(onRouteChange:) withObject:notification waitUntilDone:NO];
         return;
     };
-    
+
     bool receiverAvailable = false, usbOrHDMIAvailable = false;
     for (AVAudioSessionPortDescription *port in [[[AVAudioSession sharedInstance] currentRoute] outputs]) {
         if ([port.portType isEqualToString:AVAudioSessionPortUSBAudio] || [port.portType isEqualToString:AVAudioSessionPortHDMI]) {
@@ -198,7 +198,7 @@ static audioDeviceType NSStringToAudioDeviceType(NSString *str) {
         audioDeviceType type = NSStringToAudioDeviceType(port.portType);
         [audioSystemInfo appendFormat:@"%s%@ (%i out)", first ? "" : ", ", [port.portName stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]], channels];
         first = false;
-        
+
         if (type == audioDeviceType_headphone) outputChannelMap.headphoneAvailable = true;
         else if (type == audioDeviceType_HDMI) {
             outputChannelMap.numberOfHDMIChannelsAvailable = channels;
@@ -215,7 +215,7 @@ static audioDeviceType NSStringToAudioDeviceType(NSString *str) {
             externalAudioDeviceName = port.portName;
 #endif
         };
-        
+
         while (channels > 0) {
             RemoteIOOutputChannelMap[n++] = type;
             channels--;
@@ -225,7 +225,7 @@ static audioDeviceType NSStringToAudioDeviceType(NSString *str) {
     if ([[AVAudioSession sharedInstance] isInputAvailable]) {
         [audioSystemInfo appendString:@", Inputs: "];
         first = true;
-        
+
         for (AVAudioSessionPortDescription *port in [[[AVAudioSession sharedInstance] currentRoute] inputs]) {
             int channels = (int)[port.channels count];
             audioDeviceType type = NSStringToAudioDeviceType(port.portType);
@@ -233,7 +233,7 @@ static audioDeviceType NSStringToAudioDeviceType(NSString *str) {
             first = false;
             if (type == audioDeviceType_USB) inputChannelMap.numberOfUSBChannelsAvailable = channels;
         };
-        
+
         if (first) [audioSystemInfo appendString:@"-"];
     };
 
@@ -297,6 +297,8 @@ static void streamFormatChangedCallback(void *inRefCon, AudioUnit inUnit, AudioU
     };
 }
 
+static int x = 0;
+
 static OSStatus audioProcessingCallback(void *inRefCon, AudioUnitRenderActionFlags *ioActionFlags, const AudioTimeStamp *inTimeStamp, UInt32 inBusNumber, UInt32 inNumberFrames, AudioBufferList *ioData) {
     SuperpoweredIOSAudioIO *self = (__bridge SuperpoweredIOSAudioIO *)inRefCon;
 
@@ -319,16 +321,38 @@ static OSStatus audioProcessingCallback(void *inRefCon, AudioUnitRenderActionFla
     if (silence) { // Despite of ioActionFlags, it outputs garbage sometimes, so must zero the buffers:
         *ioActionFlags |= kAudioUnitRenderAction_OutputIsSilence;
         for (unsigned char n = 0; n < ioData->mNumberBuffers; n++) memset(ioData->mBuffers[n].mData, 0, ioData->mBuffers[n].mDataByteSize);
+    } else {
+        bool bullshit = false;
 
-        if (self->background && self->saveBatteryInBackground) { // If the app is in the background, check if we don't output anything.
-            self->silenceFrames += inNumberFrames;
-            if (self->silenceFrames > self->samplerate) { // If we waited for more than 1 second with silence, stop RemoteIO to save battery.
-                self->silenceFrames = 0;
-                [self beginInterruption];
-            };
-        } else self->silenceFrames = 0;
-    } else self->silenceFrames = 0;
-    
+        for (int j = 0; j < inNumberFrames; j++) {
+            float value = bufs[0][j];
+            if (value < -1 || value > 1) {
+                bullshit = true;
+                x++;
+                break;
+            }
+        }
+
+        if (bullshit) {
+            printf("bullshit detected in output %p\n", self);
+        } else {
+            return noErr;
+        }
+
+        if (bullshit) {
+            for (int j = 0; j < inNumberFrames; j++) {
+                float value = bufs[0][j];
+                int y = x;
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    printf("%03d %03d %03f\n", y, j, value);
+                });
+            }
+
+            *ioActionFlags |= kAudioUnitRenderAction_OutputIsSilence;
+            for (unsigned char n = 0; n < ioData->mNumberBuffers; n++) memset(ioData->mBuffers[n].mData, 0, ioData->mBuffers[n].mDataByteSize);
+        }
+    }
+
     return noErr;
 }
 
@@ -336,18 +360,18 @@ static OSStatus audioProcessingCallback(void *inRefCon, AudioUnitRenderActionFla
     AudioUnit au;
 
     AudioComponentDescription desc;
-	desc.componentType = kAudioUnitType_Output;
-	desc.componentSubType = kAudioUnitSubType_RemoteIO;
-	desc.componentFlags = 0;
-	desc.componentFlagsMask = 0;
-	desc.componentManufacturer = kAudioUnitManufacturer_Apple;
-	AudioComponent component = AudioComponentFindNext(NULL, &desc);
-	if (AudioComponentInstanceNew(component, &au) != 0) return NULL;
+    desc.componentType = kAudioUnitType_Output;
+    desc.componentSubType = kAudioUnitSubType_RemoteIO;
+    desc.componentFlags = 0;
+    desc.componentFlagsMask = 0;
+    desc.componentManufacturer = kAudioUnitManufacturer_Apple;
+    AudioComponent component = AudioComponentFindNext(NULL, &desc);
+    if (AudioComponentInstanceNew(component, &au) != 0) return NULL;
 
-	UInt32 value = 1;
-	if (AudioUnitSetProperty(au, kAudioOutputUnitProperty_EnableIO, kAudioUnitScope_Output, 0, &value, sizeof(value))) { AudioComponentInstanceDispose(au); return NULL; };
+    UInt32 value = 1;
+    if (AudioUnitSetProperty(au, kAudioOutputUnitProperty_EnableIO, kAudioUnitScope_Output, 0, &value, sizeof(value))) { AudioComponentInstanceDispose(au); return NULL; };
     value = inputEnabled ? 1 : 0;
-	if (AudioUnitSetProperty(au, kAudioOutputUnitProperty_EnableIO, kAudioUnitScope_Input, 1, &value, sizeof(value))) { AudioComponentInstanceDispose(au); return NULL; };
+    if (AudioUnitSetProperty(au, kAudioOutputUnitProperty_EnableIO, kAudioUnitScope_Input, 1, &value, sizeof(value))) { AudioComponentInstanceDispose(au); return NULL; };
 
     AudioUnitAddPropertyListener(au, kAudioUnitProperty_StreamFormat, streamFormatChangedCallback, (__bridge void *)self);
 
@@ -359,22 +383,22 @@ static OSStatus audioProcessingCallback(void *inRefCon, AudioUnitRenderActionFla
     samplerate = (int)format.mSampleRate;
     [self setSamplerateAndBuffersize];
 
-	format.mFormatID = kAudioFormatLinearPCM;
+    format.mFormatID = kAudioFormatLinearPCM;
     format.mFormatFlags = kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked | kAudioFormatFlagIsNonInterleaved | kAudioFormatFlagsNativeEndian;
     format.mBitsPerChannel = 32;
-	format.mFramesPerPacket = 1;
+    format.mFramesPerPacket = 1;
     format.mBytesPerFrame = 4;
     format.mBytesPerPacket = 4;
     format.mChannelsPerFrame = numChannels;
     if (AudioUnitSetProperty(au, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Input, 0, &format, sizeof(format))) { AudioComponentInstanceDispose(au); return NULL; };
     if (AudioUnitSetProperty(au, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Output, 1, &format, sizeof(format))) { AudioComponentInstanceDispose(au); return NULL; };
-    
-	AURenderCallbackStruct callbackStruct;
-	callbackStruct.inputProc = audioProcessingCallback;
-	callbackStruct.inputProcRefCon = (__bridge void *)self;
-	if (AudioUnitSetProperty(au, kAudioUnitProperty_SetRenderCallback, kAudioUnitScope_Input, 0, &callbackStruct, sizeof(callbackStruct))) { AudioComponentInstanceDispose(au); return NULL; };
-    
-	AudioUnitInitialize(au);
+
+    AURenderCallbackStruct callbackStruct;
+    callbackStruct.inputProc = audioProcessingCallback;
+    callbackStruct.inputProcRefCon = (__bridge void *)self;
+    if (AudioUnitSetProperty(au, kAudioUnitProperty_SetRenderCallback, kAudioUnitScope_Input, 0, &callbackStruct, sizeof(callbackStruct))) { AudioComponentInstanceDispose(au); return NULL; };
+
+    AudioUnitInitialize(au);
     return au;
 }
 
@@ -388,6 +412,7 @@ static OSStatus audioProcessingCallback(void *inRefCon, AudioUnitRenderActionFla
 
 - (void)stop {
     if (audioUnit != NULL) AudioOutputUnitStop(audioUnit);
+    x = 0;
 }
 
 - (void)setPreferredBufferSizeMs:(int)ms {
