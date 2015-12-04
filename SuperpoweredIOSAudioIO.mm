@@ -185,19 +185,13 @@ static OSStatus audioProcessingCallback(void *inRefCon, AudioUnitRenderActionFla
         }
 
         if (bullshit) {
-            printf("bullshit detected in output %p\n", self);
-        } else {
-            return noErr;
-        }
-
-        if (bullshit) {
-            for (int j = 0; j < inNumberFrames; j++) {
-                float value = bufs[0][j];
-                int y = x;
-                dispatch_async(dispatch_get_main_queue(), ^{
-                    printf("%03d %03d %03f\n", y, j, value);
-                });
-            }
+//            for (int j = 0; j < inNumberFrames; j++) {
+//                float value = bufs[0][j];
+//                int y = x;
+//                dispatch_async(dispatch_get_main_queue(), ^{
+//                    printf("%03d %03d %03f\n", y, j, value);
+//                });
+//            }
 
             *ioActionFlags |= kAudioUnitRenderAction_OutputIsSilence;
             for (unsigned char n = 0; n < ioData->mNumberBuffers; n++) memset(ioData->mBuffers[n].mData, 0, ioData->mBuffers[n].mDataByteSize);
